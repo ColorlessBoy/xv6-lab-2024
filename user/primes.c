@@ -9,6 +9,7 @@ int prepare_context(int new_start_number, int* start_number_pointer, int* has_ri
   if (pid == 0) {
     printf("prime %d\n", new_start_number);
     close(tmp_pipe[1]); // 新的子进程不需要写tmp_pipe
+    close(data_pipe[0]); // 关闭旧的pipe的读端
     data_pipe[0] = tmp_pipe[0];
     *start_number_pointer = new_start_number;
     // TODO: 弄清楚这里的bug产生机制，我先猜测是pipe资源不足，感觉很奇怪，输出到 prime 5 就停止了
