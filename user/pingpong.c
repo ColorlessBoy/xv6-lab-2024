@@ -16,6 +16,7 @@ main(int argc, char *argv[])
     // child process
     close(parent_message[1]);
     close(child_message[0]);
+    // read 会一直执行到父进程关闭管道为止
     while (read(parent_message[0], message, sizeof(message)) > 0) {
       if (strcmp(message, "ping") == 0) {
         printf("%d: received ping\n", getpid());
@@ -29,6 +30,7 @@ main(int argc, char *argv[])
     close(parent_message[0]);
     close(child_message[1]);
     write(parent_message[1], "ping", 5);
+    // read 会一直执行到子进程关闭管道为止
     while (read(child_message[0], message, sizeof(message)) > 0) {
       if (strcmp(message, "pong") == 0) {
         printf("%d: received pong\n", getpid());
