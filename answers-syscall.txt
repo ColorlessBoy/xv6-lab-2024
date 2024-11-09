@@ -1,0 +1,19 @@
+The `usertrap()` at kernel/trap.c called syscall.
+
+The `p->trapframe->a7 = 7`. It means the number of `SYS_exec` which defined at syscall.h. 
+
+用户模式
+在GDB里输入`(gdb) p /x $sstatus`, 可知 `$sstatus = 0x200000022`。 0x200000022 表示：•	位 33 (SD): 表示浮点寄存器的状态已被修改。 • 位 5 (SIE): 表示 Supervisor 模式允许中断。 •	位 1 (UIE): 表示用户模式允许中断。
+在 RISC-V 架构中，sstatus 寄存器的第 8 位（SPP）指示了 CPU 之前的特权级别。根据你提供的 sstatus = 0x200000022，第 8 位（SPP）为 0，这意味着 CPU 之前的模式是用户模式（User Mode）。
+因此，CPU 之前的模式是用户模式。因此，CPU 之前的模式是用户模式。
+
+
+80001c82:	00002683          	lw	a3,0(zero) # 0 <_entry-0x80000000>
+a3
+
+initcode
+1
+
+
+
+
