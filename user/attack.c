@@ -19,8 +19,9 @@ main(int argc, char *argv[])
 
   // 遍历内存区域查找Secret Signature.
   for (ptr = start; ptr < end; ptr += PGSIZE) {
+    // free() 会覆盖页表前8个字符用于存放指针，所以 'my very ' 这8个字符会被覆盖掉。
+    // r = (struct run*)pa; 这个链表头是保存在被free的物理页上。
     if (memcmp(signature + 8, ptr + 8, 32 - 8) == 0) {
-      // free() 会覆盖页表前8个字符用于存放指针，所以 'my very ' 这8个字符会被覆盖掉。
       printf("Secret found at: %p\n", ptr + 32);
       printf("Secret: %s\n", ptr + 32);
       write(2, ptr + 32, 8);
