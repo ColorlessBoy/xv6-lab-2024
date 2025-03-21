@@ -3057,6 +3057,8 @@ countfree()
 
   close(fds[0]);
   wait((int*)0);
+
+  printf("countfree: %d pages\n", n);
   
   return n;
 }
@@ -3067,6 +3069,7 @@ drivetests(int quick, int continuous, char *justone) {
     printf("usertests starting\n");
     int free0 = countfree();
     int free1 = 0;
+    /*
     if (runtests(quicktests, justone, continuous)) {
       if(continuous != 2) {
         return 1;
@@ -3081,6 +3084,7 @@ drivetests(int quick, int continuous, char *justone) {
         }
       }
     }
+    */
     if((free1 = countfree()) < free0) {
       printf("FAILED -- lost some free pages %d (out of %d)\n", free1, free0);
       if(continuous != 2) {

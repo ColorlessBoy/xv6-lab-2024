@@ -1,0 +1,10 @@
+# Inspect a user-process page table (easy)
+
+- print_pgtbl() 打印前10页和最后10页的信息
+- 包含: 虚拟地址，pte，物理地址和标志等内容
+
+# Speed up system calls (easy)
+`fork` 用到了 pid, 所以可以加速
+
+# Print a page table (easy)
+包含 text 部分代码块, 异常处理部分的内存页

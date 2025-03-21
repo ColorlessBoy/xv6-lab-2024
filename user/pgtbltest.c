@@ -31,7 +31,7 @@ err(char *why)
   exit(1);
 }
 
-void
+void 
 print_pte(uint64 va)
 {
     pte_t pte = (pte_t) pgpte((void *) va);
@@ -120,10 +120,11 @@ superpg_test()
   printf("superpg_test starting\n");
   testname = "superpg_test";
   
-  char *end = sbrk(N);
+  char *end = sbrk(N); // 8 << (1 << 20) = 8M
   if (end == 0 || end == (char*)0xffffffffffffffff)
     err("sbrk failed");
   
+  print_kpgtbl();
   uint64 s = SUPERPGROUNDUP((uint64) end);
   supercheck(s);
   if((pid = fork()) < 0) {
