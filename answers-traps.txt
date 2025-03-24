@@ -1,0 +1,25 @@
+
+Q: Which registers contain arguments to functions? For example, which register holds 13 in main's call to printf?
+A: `li a2,13` means `a2` holds 13.
+Q: Where is the call to function f in the assembly code for main? Where is the call to g? (Hint: the compiler may inline functions.)
+A: `li a1,12` means the calls to f and g are optimized in integer 12.
+Q: At what address is the function printf located?
+A: `jal 6bc <printf>` means the address of `printf` is `0x6bc`. Note that `<printf>` is a comment.
+Q: What value is in the register ra just after the jalr to printf in main?
+A: I think `ra = 0x34`. 
+Q: What the output of `unsigned int i = 0x00646c72; printf("H%x Wo%s", 57616, (char *) &i);`
+A: The output is "HE110 World". `57616 = 0xE110` so "H%x" = "HE110". Because of little-endian, in memory, `0x00646c72` is [`0x72`, `0x6c`, `0x64`, `0x00`] = ['r', 'l', 'd'].
+Q: If the RISC-V were instead big-endian what would you set i to in order to yield the same output? Would you need to change 57616 to a different value? 
+A: `unsigned int i = 0x726c6400; printf("H%x Wo%s", 57616, (char *) &i);`
+Q: In the following code, what is going to be printed after 'y='? `printf("x=%d y=%d", 3);`
+A: Compiler reports an error 
+```
+user/call.c: In function 'main':
+user/call.c:16:19: error: format '%d' expects a matching 'int' argument [-Werror=format=]
+   16 |   printf("x=%d y=%d", 3);
+      |                  ~^
+      |                   |
+      |                   int
+cc1: all warnings being treated as errors
+make: *** [user/call.o] Error 1
+```
