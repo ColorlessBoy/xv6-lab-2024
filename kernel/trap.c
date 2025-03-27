@@ -67,7 +67,9 @@ usertrap(void)
     syscall();
   } else if (r_scause() == 15){
     uint64 va = r_stval();
-    if(cowwalkalloc(p->pagetable, va) == 0) {
+    pte_t *pte;
+    if(va >= p->sz || (pte = cowwalkalloc(p->pagetable, va)) == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
+       (*pte & PTE_W) == 0){
       printf("write page fault\n");
       printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
       printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());

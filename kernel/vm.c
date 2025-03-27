@@ -456,7 +456,7 @@ cowwalkalloc(pagetable_t pagetable, uint64 va) {
   pte_t *pte;
   uint flags;
   char *mem;
-  if((pte = walk(pagetable, va, 0)) == 0) {
+  if((pte = walk(pagetable, va, 0)) == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) {
     return 0;
   }
   if(*pte & PTE_COW) {
