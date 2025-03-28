@@ -134,12 +134,16 @@ e1000_recv(void)
     if ((rx_ring[idx].status & E1000_RXD_STAT_DD) == 0) {
       break;
     }
-    net_rx(rx_bufs[idx], rx_ring[idx].length);
+    char *buf = rx_bufs[idx];
+    int length = rx_ring[idx].length;
+    char *new_buf = kalloc();
+    if (new_buf == 0)
+      panic("e1000_recv: kalloc failed");
+    rx_bufs[idx] = new_buf;
+    rx_ring[idx].addr = (uint64) new_buf;
     rx_ring[idx].status &= ~E1000_RXD_STAT_DD;
-    rx_bufs[idx] = kalloc();
-    if (!rx_bufs[idx])
-      panic("e1000_recv");
-    regs[E1000_RDT] = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    regs[E1000_RDT] = idx;
+    net_rx(buf, length);
   }
 }
 

@@ -164,6 +164,7 @@ elif sys.argv[1] == "grade":
     # third, act as a ping reflector.
     while True:
         buf, raddr = sock.recvfrom(4096)
+        print("ping: received %s" % (buf))
         sock.sendto(buf, raddr)
 else:
     usage()

@@ -471,6 +471,7 @@ ping3()
       return 0;
     }
   }
+  printf("ping3: sent one packet on 2009\n");
   sleep(1);
   
   //
@@ -492,6 +493,7 @@ ping3()
       return 0;
     }
   }
+  printf("ping3: sent 257 packets from 2008 and 2010\n");
   sleep(1);
 
   //
@@ -556,6 +558,7 @@ ping3()
       return 0;
     }
   }
+  printf("ping3: 2009 OK\n");
 
   //
   // now count how many replies were queued for 2008.
@@ -576,6 +579,7 @@ ping3()
         printf("ping3: recv failed\n");
         break;
       }
+      printf("ping3: 2008 recv %d bytes\n", cc);
       write(fds[1], "x", 1);
     }
     exit(0);

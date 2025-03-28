@@ -1,0 +1,10 @@
+{
+  "files.associations": {
+    "proc.h": "c",
+    "__config": "cpp",
+    "numeric": "cpp",
+    "ostream": "cpp",
+    "system_error": "cpp",
+    "typeinfo": "cpp"
+  }
+}

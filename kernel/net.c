@@ -19,10 +19,27 @@ static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
 static struct spinlock netlock;
 
+#define MAX_UDP_PACKET_SIZE 16
+
+struct udp_port_record {
+  uint16 port;
+  char *packets[MAX_UDP_PACKET_SIZE];
+  int start;
+  int end;
+  struct udp_port_record *next;
+  struct spinlock lock;
+};
+
+static struct udp_pool {
+  struct spinlock lock;
+  struct udp_port_record head;
+} udp_pool;
+
 void
 netinit(void)
 {
   initlock(&netlock, "netlock");
+  initlock(&udp_pool.lock, "udp_pool");
 }
 
 
@@ -37,8 +54,33 @@ sys_bind(void)
   //
   // Your code here.
   //
-
-  return -1;
+  int port;
+  argint(0, &port);
+  acquire(&udp_pool.lock);
+  printf("bind port %d\n", port);
+  struct udp_port_record *r = udp_pool.head.next;
+  while (r) {
+    if (r->port == port) {
+      // duplicate port 
+      release(&udp_pool.lock);
+      return -1;
+    }
+    r = r->next;
+  }
+  struct udp_port_record *new_r = kalloc();
+  if (new_r == 0) {
+    release(&udp_pool.lock);
+    return -1;
+  }
+  new_r->port = port;
+  new_r->next = 0;
+  new_r->start = 0;
+  new_r->end = 0;
+  new_r->next = udp_pool.head.next;
+  udp_pool.head.next = new_r;
+  initlock(&new_r->lock, "udp_port_record");
+  release(&udp_pool.lock);
+  return 0;
 }
 
 //
@@ -52,7 +94,32 @@ sys_unbind(void)
   //
   // Optional: Your code here.
   //
-
+  int port;
+  argint(0, &port);
+  acquire(&udp_pool.lock);
+  struct udp_port_record *pre_r = &udp_pool.head;
+  while (pre_r->next) {
+    if (pre_r->next->port == port) {
+      break;
+    }
+    pre_r = pre_r->next;
+  }
+  if (pre_r->next == 0) {
+    // binded port not found
+    release(&udp_pool.lock);
+    return -1;
+  }
+  struct udp_port_record *r = pre_r->next;
+  pre_r->next = pre_r->next->next;
+  acquire(&r->lock);
+  for (int i = 0; i < MAX_UDP_PACKET_SIZE; i++) {
+    if (r->packets[i] != 0) {
+      kfree((void *)r->packets[i]);
+    }
+  }
+  release(&r->lock);
+  kfree((void *) r);
+  release(&udp_pool.lock);
   return 0;
 }
 
@@ -77,7 +144,64 @@ sys_recv(void)
   //
   // Your code here.
   //
-  return -1;
+  struct proc *p = myproc();
+  int dport;
+  uint64 srcaddr;
+  uint64 sportaddr;
+  uint64 bufaddr;
+  int maxlen;
+
+  argint(0, &dport);
+  argaddr(1, &srcaddr);
+  argaddr(2, &sportaddr);
+  argaddr(3, &bufaddr);
+  argint(4, &maxlen);
+
+  acquire(&udp_pool.lock);
+  struct udp_port_record *r = udp_pool.head.next;
+  while (r && r->port != dport) {
+    r = r->next;
+  }
+  release(&udp_pool.lock);
+  if (r == 0) {
+    // unbinded port
+    printf("port %d not binded\n", dport);
+    return -1;
+  }
+  acquire(&r->lock);
+  if (r->start == r->end) {
+    sleep(&r->start, &r->lock);
+  }
+  printf("sys_recv: start %d, end %d\n", r->start, r->end);
+  char *packet = r->packets[r->start];
+  struct eth *ineth = (struct eth *)packet;
+  struct ip *inip = (struct ip *)(ineth + 1);
+  struct udp *inudp = (struct udp *)(inip + 1);
+  char *payload = (char *)(inudp + 1);
+  printf("sys_recv: strlen, ulen=%d\n", inudp->ulen);
+  int n = ntohs(inudp->ulen) - sizeof(struct udp);
+  if (n > maxlen) {
+    n = maxlen;
+  }
+  printf("sys_recv: n = %d\n", n);
+  uint32 ip_src = ntohl(inip->ip_src);
+  uint16 sport = ntohs(inudp->sport);
+  acquire(&p->lock);
+  printf("sys_recv: copyout start\n");
+  if (copyout(p->pagetable, srcaddr, (char *)&ip_src, sizeof(srcaddr)) < 0 ||
+    copyout(p->pagetable, sportaddr, (char *)&sport, sizeof(sport)) < 0 ||
+    copyout(p->pagetable, bufaddr, (char *)payload, n) < 0) {
+    release(&p->lock);
+    release(&r->lock);
+    return -1;
+  }
+  release(&p->lock);
+  printf("sys_recv: copyout done\n");
+  r->packets[r->start] = 0;
+  r->start = (r->start + 1) % MAX_UDP_PACKET_SIZE;
+  kfree((void *)packet);
+  release(&r->lock);
+  return n;
 }
 
 // This code is lifted from FreeBSD's ping.c, and is copyright by the Regents
@@ -140,7 +264,6 @@ sys_send(void)
 
   char *buf = kalloc();
   if(buf == 0){
-    printf("sys_send: kalloc failed\n");
     return -1;
   }
   memset(buf, 0, PGSIZE);
@@ -170,7 +293,6 @@ sys_send(void)
   char *payload = (char *)(udp + 1);
   if(copyin(p->pagetable, payload, bufaddr, len) < 0){
     kfree(buf);
-    printf("send: copyin failed\n");
     return -1;
   }
 
@@ -191,7 +313,39 @@ ip_rx(char *buf, int len)
   //
   // Your code here.
   //
-  
+  struct eth *ineth = (struct eth *) buf;
+  struct ip *inip = (struct ip *) (ineth + 1);
+  if (inip->ip_p != IPPROTO_UDP) {
+    // not udp packet
+    kfree(buf);
+    return;
+  } 
+  struct udp *inudp = (struct udp *) (inip + 1);
+  uint16 dport = ntohs(inudp -> dport);
+  acquire(&udp_pool.lock);
+  struct udp_port_record *r = udp_pool.head.next;
+  while (r && r->port!= dport) {
+    r = r->next;
+  }
+  release(&udp_pool.lock);
+  if (r == 0) {
+    // unbinded port
+    kfree(buf);
+    return;
+  }
+  printf("ip_rx: received a UDP packet, port=%d, start=%d, end=%d\n", dport, r->start, r->end);
+  acquire(&r->lock);
+  int next_end = (r->end + 1) % MAX_UDP_PACKET_SIZE;
+  if (next_end == r->start) {
+    // queue is full
+    kfree(buf);
+    release(&r->lock);
+    return;
+  }
+  r->packets[r->end] = buf;
+  r->end = next_end;
+  wakeup(&r->start);
+  release(&r->lock);
 }
 
 //
