@@ -24,8 +24,9 @@ static struct spinlock netlock;
 struct udp_port_record {
   uint16 port;
   char *packets[MAX_UDP_PACKET_SIZE];
-  int start;
-  int end;
+  uint start;
+  uint end;
+  uint count;
   struct udp_port_record *next;
   struct spinlock lock;
 };
@@ -57,7 +58,6 @@ sys_bind(void)
   int port;
   argint(0, &port);
   acquire(&udp_pool.lock);
-  printf("bind port %d\n", port);
   struct udp_port_record *r = udp_pool.head.next;
   while (r) {
     if (r->port == port) {
@@ -73,12 +73,12 @@ sys_bind(void)
     return -1;
   }
   new_r->port = port;
-  new_r->next = 0;
   new_r->start = 0;
   new_r->end = 0;
+  new_r->count = 0;
   new_r->next = udp_pool.head.next;
   udp_pool.head.next = new_r;
-  initlock(&new_r->lock, "udp_port_record");
+  initlock(&new_r->lock, "udp_port");
   release(&udp_pool.lock);
   return 0;
 }
@@ -165,29 +165,23 @@ sys_recv(void)
   release(&udp_pool.lock);
   if (r == 0) {
     // unbinded port
-    printf("port %d not binded\n", dport);
     return -1;
   }
   acquire(&r->lock);
-  if (r->start == r->end) {
+  while (r->count == 0) {
     sleep(&r->start, &r->lock);
   }
-  printf("sys_recv: start %d, end %d\n", r->start, r->end);
   char *packet = r->packets[r->start];
   struct eth *ineth = (struct eth *)packet;
   struct ip *inip = (struct ip *)(ineth + 1);
   struct udp *inudp = (struct udp *)(inip + 1);
   char *payload = (char *)(inudp + 1);
-  printf("sys_recv: strlen, ulen=%d\n", inudp->ulen);
   int n = ntohs(inudp->ulen) - sizeof(struct udp);
   if (n > maxlen) {
     n = maxlen;
   }
-  printf("sys_recv: n = %d\n", n);
   uint32 ip_src = ntohl(inip->ip_src);
   uint16 sport = ntohs(inudp->sport);
-  acquire(&p->lock);
-  printf("sys_recv: copyout start\n");
   if (copyout(p->pagetable, srcaddr, (char *)&ip_src, sizeof(srcaddr)) < 0 ||
     copyout(p->pagetable, sportaddr, (char *)&sport, sizeof(sport)) < 0 ||
     copyout(p->pagetable, bufaddr, (char *)payload, n) < 0) {
@@ -195,10 +189,9 @@ sys_recv(void)
     release(&r->lock);
     return -1;
   }
-  release(&p->lock);
-  printf("sys_recv: copyout done\n");
   r->packets[r->start] = 0;
   r->start = (r->start + 1) % MAX_UDP_PACKET_SIZE;
+  r->count--;
   kfree((void *)packet);
   release(&r->lock);
   return n;
@@ -333,17 +326,16 @@ ip_rx(char *buf, int len)
     kfree(buf);
     return;
   }
-  printf("ip_rx: received a UDP packet, port=%d, start=%d, end=%d\n", dport, r->start, r->end);
   acquire(&r->lock);
-  int next_end = (r->end + 1) % MAX_UDP_PACKET_SIZE;
-  if (next_end == r->start) {
+  if (r->count == MAX_UDP_PACKET_SIZE) {
     // queue is full
     kfree(buf);
     release(&r->lock);
     return;
   }
   r->packets[r->end] = buf;
-  r->end = next_end;
+  r->end = (r->end + 1) % MAX_UDP_PACKET_SIZE;
+  r->count++;
   wakeup(&r->start);
   release(&r->lock);
 }
