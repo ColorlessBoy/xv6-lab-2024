@@ -19,6 +19,7 @@ static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
 static struct spinlock netlock;
 
+#define MAX_UDP_RECORDS 16
 #define MAX_UDP_PACKET_SIZE 16
 
 struct udp_port_record {
@@ -27,13 +28,13 @@ struct udp_port_record {
   uint start;
   uint end;
   uint count;
-  struct udp_port_record *next;
   struct spinlock lock;
 };
 
 static struct udp_pool {
   struct spinlock lock;
-  struct udp_port_record head;
+  struct udp_port_record records[MAX_UDP_RECORDS];
+  uint32 used_mask;
 } udp_pool;
 
 void
@@ -41,6 +42,20 @@ netinit(void)
 {
   initlock(&netlock, "netlock");
   initlock(&udp_pool.lock, "udp_pool");
+  udp_pool.used_mask = 0;
+  for (int i = 0; i < MAX_UDP_RECORDS; i++) {
+    initlock(&udp_pool.records[i].lock, "udp_port");
+  }
+}
+
+int 
+getrecordindex(uint16 port) {
+  for (int i = 0; i < MAX_UDP_RECORDS; i++) {
+    if ((udp_pool.used_mask & (1 << i)) != 0 && udp_pool.records[i].port == port) {
+      return i;
+    }
+  }
+  return -1;
 }
 
 
@@ -58,27 +73,29 @@ sys_bind(void)
   int port;
   argint(0, &port);
   acquire(&udp_pool.lock);
-  struct udp_port_record *r = udp_pool.head.next;
-  while (r) {
-    if (r->port == port) {
-      // duplicate port 
-      release(&udp_pool.lock);
-      return -1;
-    }
-    r = r->next;
-  }
-  struct udp_port_record *new_r = kalloc();
-  if (new_r == 0) {
+  if (getrecordindex(port) != -1) {
+    // duplicated port
     release(&udp_pool.lock);
     return -1;
   }
-  new_r->port = port;
-  new_r->start = 0;
-  new_r->end = 0;
-  new_r->count = 0;
-  new_r->next = udp_pool.head.next;
-  udp_pool.head.next = new_r;
-  initlock(&new_r->lock, "udp_port");
+  struct udp_port_record *r = 0;
+  for (int i = 0; i < MAX_UDP_RECORDS; i++) {
+    if ((udp_pool.used_mask & (1 << i)) == 0) {
+      udp_pool.used_mask |= (1 << i);
+      r = &udp_pool.records[i];
+      printf("sys_bind: port %d, index %d\n", port, i);
+      break;
+    }
+  }
+  acquire(&r->lock);
+  r->port = port;
+  r->start = 0;
+  r->end = 0;
+  r->count = 0;
+  for (int i = 0; i < MAX_UDP_PACKET_SIZE; i++) {
+    r->packets[i] = 0;
+  }
+  release(&r->lock);
   release(&udp_pool.lock);
   return 0;
 }
@@ -97,28 +114,19 @@ sys_unbind(void)
   int port;
   argint(0, &port);
   acquire(&udp_pool.lock);
-  struct udp_port_record *pre_r = &udp_pool.head;
-  while (pre_r->next) {
-    if (pre_r->next->port == port) {
-      break;
-    }
-    pre_r = pre_r->next;
-  }
-  if (pre_r->next == 0) {
-    // binded port not found
+  int index = getrecordindex(port);
+  if (index == -1) {
+    // unbinded port
     release(&udp_pool.lock);
     return -1;
   }
-  struct udp_port_record *r = pre_r->next;
-  pre_r->next = pre_r->next->next;
+  struct udp_port_record *r = &udp_pool.records[index];
   acquire(&r->lock);
-  for (int i = 0; i < MAX_UDP_PACKET_SIZE; i++) {
-    if (r->packets[i] != 0) {
-      kfree((void *)r->packets[i]);
-    }
+  for (int i = 0; i < r->count; i++) {
+    kfree((void *)r->packets[r->start]);
+    r->start = (r->start + 1) % MAX_UDP_PACKET_SIZE;
   }
   release(&r->lock);
-  kfree((void *) r);
   release(&udp_pool.lock);
   return 0;
 }
@@ -158,20 +166,21 @@ sys_recv(void)
   argint(4, &maxlen);
 
   acquire(&udp_pool.lock);
-  struct udp_port_record *r = udp_pool.head.next;
-  while (r && r->port != dport) {
-    r = r->next;
-  }
+  int index = getrecordindex(dport);
   release(&udp_pool.lock);
-  if (r == 0) {
-    // unbinded port
+  if (index == -1) {
     return -1;
   }
+  struct udp_port_record *r = &udp_pool.records[index];
   acquire(&r->lock);
   while (r->count == 0) {
-    sleep(&r->start, &r->lock);
+    sleep(&r->count, &r->lock);
   }
   char *packet = r->packets[r->start];
+  if (packet == 0) {
+    release(&r->lock);
+    return -1;
+  }
   struct eth *ineth = (struct eth *)packet;
   struct ip *inip = (struct ip *)(ineth + 1);
   struct udp *inudp = (struct udp *)(inip + 1);
@@ -182,10 +191,9 @@ sys_recv(void)
   }
   uint32 ip_src = ntohl(inip->ip_src);
   uint16 sport = ntohs(inudp->sport);
-  if (copyout(p->pagetable, srcaddr, (char *)&ip_src, sizeof(srcaddr)) < 0 ||
+  if (copyout(p->pagetable, srcaddr, (char *)&ip_src, sizeof(ip_src)) < 0 ||
     copyout(p->pagetable, sportaddr, (char *)&sport, sizeof(sport)) < 0 ||
     copyout(p->pagetable, bufaddr, (char *)payload, n) < 0) {
-    release(&p->lock);
     release(&r->lock);
     return -1;
   }
@@ -316,16 +324,14 @@ ip_rx(char *buf, int len)
   struct udp *inudp = (struct udp *) (inip + 1);
   uint16 dport = ntohs(inudp -> dport);
   acquire(&udp_pool.lock);
-  struct udp_port_record *r = udp_pool.head.next;
-  while (r && r->port!= dport) {
-    r = r->next;
-  }
+  int index = getrecordindex(dport);
   release(&udp_pool.lock);
-  if (r == 0) {
+  if (index == -1) {
     // unbinded port
     kfree(buf);
     return;
   }
+  struct udp_port_record *r = &udp_pool.records[index];
   acquire(&r->lock);
   if (r->count == MAX_UDP_PACKET_SIZE) {
     // queue is full
@@ -336,7 +342,7 @@ ip_rx(char *buf, int len)
   r->packets[r->end] = buf;
   r->end = (r->end + 1) % MAX_UDP_PACKET_SIZE;
   r->count++;
-  wakeup(&r->start);
+  wakeup(&r->count);
   release(&r->lock);
 }
 

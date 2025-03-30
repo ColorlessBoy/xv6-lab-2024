@@ -104,6 +104,7 @@ e1000_transmit(char *buf, int len)
   acquire(&e1000_lock);
   uint32 tdt = regs[E1000_TDT];
   if((tx_ring[tdt].status & E1000_TXD_STAT_DD) == 0) {
+    kfree(buf);
     release(&e1000_lock);
     return -1; // not ready, full ring
   }  
