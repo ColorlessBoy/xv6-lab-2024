@@ -12,6 +12,7 @@
 #include "file.h"
 #include "stat.h"
 #include "proc.h"
+#include "fcntl.h"
 
 struct devsw devsw[NDEV];
 struct {
@@ -180,3 +181,80 @@ filewrite(struct file *f, uint64 addr, int n)
   return ret;
 }
 
+int 
+mmapread(pagetable_t pagetable, struct vma *vmas, uint64 va)
+{
+  int i = 0;
+  for (i = 0; i < N_VMA; i++) {
+    if (va >= vmas[i].address && va < vmas[i].address + vmas[i].length) {
+      char *mem = kalloc();
+      if (mem == 0)
+        return -1;
+      else {
+        memset(mem, 0, PGSIZE);
+        va = PGROUNDDOWN(va);
+        ilock(vmas[i].f->ip);
+        if (readi(vmas[i].f->ip, 0, (uint64)mem, va + vmas[i].offset - vmas[i].address, PGSIZE) < 0) {
+          panic("mmap read failed");
+        }
+        iunlock(vmas[i].f->ip);
+        int flag = 0;
+        if (vmas[i].prot & PROT_WRITE)
+          flag = PTE_W;
+        if (vmas[i].prot & PROT_READ)
+          flag |= PTE_R;
+        if (mappages(pagetable, va, PGSIZE, (uint64)mem, flag | PTE_MMAP | PTE_U) != 0) {
+          kfree(mem);
+          return -1;
+        }
+        vmas[i].mapped += PGSIZE;
+      }
+      return 0;
+    }
+  }
+  return -1;
+}
+
+void
+munmap(pagetable_t pagetable, uint64 va, uint64 length, struct vma *vma)
+{
+  uint64 a;
+  pte_t *pte;
+
+  if((va % PGSIZE) != 0)
+    panic("munmap: not aligned");
+
+  for(a = va; a < va + length && a < vma->address + vma->length; a += PGSIZE){
+    if((pte = walk(pagetable, a, 0)) == 0)
+      continue;
+    if((*pte & PTE_MUNMAP) != 0) 
+      continue;
+    if((*pte & PTE_V) == 0)
+      continue;
+    if((*pte & PTE_V) == 0) {
+      panic("munmap: not mapped");
+    }
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("munmap: not a leaf");
+    
+    if((vma->flags & MAP_SHARED) && vma->f->writable && (vma->prot & PROT_WRITE)){
+      begin_op();
+      ilock(vma->f->ip);
+      if (a + PGSIZE > vma->address + vma->length) {
+        writei(vma->f->ip, 1, a, a + vma->offset - vma->address, vma->address + vma->length - a);
+      } else {
+        writei(vma->f->ip, 1, a, a + vma->offset - vma->address, PGSIZE);
+      }
+      iunlock(vma->f->ip);
+      end_op();
+    }
+    
+    vma->mapped -= PGSIZE;
+    if (vma->mapped < 0) {
+      panic("munmap: mapped < 0");
+    }
+    uint64 pa = PTE2PA(*pte);
+    kfree((void*)pa);
+    *pte = PTE_MUNMAP;
+  }
+}

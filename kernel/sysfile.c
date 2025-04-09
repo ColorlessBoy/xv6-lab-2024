@@ -503,3 +503,103 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void)
+{
+  uint64 addr;
+  int len;
+  int prot;
+  int flags;
+  int offset;
+  struct file *f;
+  int newsz;
+  struct vma *vma = 0;
+
+  struct proc *p = myproc();
+  uint64 va = p->sz;
+
+  argaddr(0, &addr);
+  if (addr != 0) {
+    printf("mmap: addr!= 0");
+    return -1;
+  }
+  argint(1, &len);
+  if (len < 0) {
+    printf("mmap: len < 0");
+    return -1;
+  }
+  argint(2, &prot);
+  if (prot != PROT_READ && prot != PROT_WRITE && prot != (PROT_READ | PROT_WRITE)) {
+    printf("mmap: prot != PROT_READ && prot != PROT_WRITE && prot != PROT_READ | PROT_WRITE");
+    return -1;
+  }
+  argint(3, &flags);
+  if (flags != MAP_PRIVATE && flags != MAP_SHARED) {
+    printf("mmap: flags!= MAP_PRIVATE && flags!= MAP_SHARED");
+    return -1;
+  }
+  if (argfd(4, 0, &f) < 0) {
+    printf("mmap: invalid fd");
+    return -1;
+  }
+  argint(5, &offset);
+  if (offset != 0) {
+    printf("mmap: offset != 0");
+    return -1;
+  }
+  if (f->type != FD_INODE || (!f->writable && (prot & PROT_WRITE) && (flags & MAP_SHARED))) {
+    return -1;
+  }
+  if (offset + len > f->ip->size) {
+    len = f->ip->size - offset;
+  }
+
+  for (int i = 0; i < N_VMA; i++) {
+    if (!p->vmas[i].used) {
+      vma = &p->vmas[i];
+      vma->used = 1;
+      vma->address = va;
+      vma->length = len;
+      vma->prot = prot;
+      vma->flags = flags;
+      vma->offset = offset;
+      vma->f = filedup(f);
+      vma->mapped = 0;
+      break;
+    }
+  }
+  if (vma == 0) {
+    return -1;
+  }
+
+  newsz = p->sz + PGROUNDUP(len);
+  p->sz = newsz;
+  return va;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 va;
+  int length;
+  struct proc *p = myproc();
+  argaddr(0, &va);
+  argint(1, &length);
+  if(va < 0 || length < 0){
+      return -1;
+  }
+  va = PGROUNDDOWN(va);
+
+  for(int i = 0; i < N_VMA; ++i){
+    if(p->vmas[i].address != 0 && va >= p->vmas[i].address && va < p->vmas[i].address + p->vmas[i].length){
+      munmap(p->pagetable, va, length, &(p->vmas[i]));
+      if (p->vmas[i].mapped == 0) {
+        fileclose(p->vmas[i].f);
+        p->vmas[i].used = 0;
+      }
+      break;
+    }
+  }
+  return 0;
+}

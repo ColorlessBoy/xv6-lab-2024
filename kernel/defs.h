@@ -7,6 +7,7 @@ struct context;
 struct file;
 struct inode;
 struct pipe;
+struct vma;
 struct proc;
 struct spinlock;
 struct sleeplock;
@@ -37,6 +38,8 @@ void            fileinit(void);
 int             fileread(struct file*, uint64, int n);
 int             filestat(struct file*, uint64 addr);
 int             filewrite(struct file*, uint64, int n);
+int             mmapread(pagetable_t pagetable, struct vma *vmas, uint64 va);
+void            munmap(pagetable_t pagetable, uint64 va, uint64 length, struct vma *vma);
 
 // fs.c
 void            fsinit(int);

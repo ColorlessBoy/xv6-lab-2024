@@ -197,8 +197,10 @@ mmap_test(void)
     if (buf[i] != 'B')
       err("file page 0 does not contain modifications");
   }
-  if(read(fd, buf, PGSIZE) != PGSIZE/2)
+  int tmp = 0;
+  if((tmp = read(fd, buf, PGSIZE)) != PGSIZE/2) {
     err("dirty read #2");
+  }
   for (i = 0; i < PGSIZE/2; i++){
     if (buf[i] != 'C')
       err("file page 1 does not contain modifications");
@@ -359,6 +361,8 @@ more_test()
   makefile(f);
   if ((fd = open(f, O_RDWR)) == -1)
     err("open");
+
+  printf("=================\n");
   p = mmap(0, PGSIZE*2, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   if (p == MAP_FAILED)
     err("mmap");
